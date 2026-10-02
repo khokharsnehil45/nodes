@@ -181,7 +181,9 @@ fn normalize_arguments(args: &[String]) -> Vec<String> {
             "--disconnect" | "-disconnect" => "disconnect".to_string(),
             "--list" | "-list" => "list".to_string(),
             "--inspect" | "-inspect" => "inspect".to_string(),
-            "--delete" | "-delete" => "delete".to_string(),
+            "--delete" | "-delete" | "--rm" | "-rm" | "rm" | "--remove" | "-remove" | "remove" => {
+                "delete".to_string()
+            }
             "--edges" | "-edges" => "edges".to_string(),
             _ => arg.clone(),
         };
@@ -601,11 +603,23 @@ fn handle_inspect(path: &Path, args: InspectArgs) -> Result<()> {
 
 fn handle_delete(path: &Path, args: DeleteArgs) -> Result<()> {
     let mut graph = Storage::load(path)?;
+    let edges_before = graph.edges.len();
 
     match graph.remove_node(&args.name) {
         Some(_) => {
+            let removed_edges = edges_before - graph.edges.len();
             Storage::save(path, &graph)?;
-            println!("{} Deleted node '{}'", "✓".green().bold(), args.name.cyan());
+            if removed_edges > 0 {
+                println!(
+                    "{} Deleted node '{}' (and cleaned up {} connected edge{})",
+                    "✓".green().bold(),
+                    args.name.cyan(),
+                    removed_edges,
+                    if removed_edges == 1 { "" } else { "s" }
+                );
+            } else {
+                println!("{} Deleted node '{}'", "✓".green().bold(), args.name.cyan());
+            }
             Ok(())
         }
         None => {
