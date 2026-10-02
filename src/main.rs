@@ -4,66 +4,48 @@ mod storage;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use cli::{Cli, Commands, ConnectArgs, CreateArgs, DeleteArgs, DisconnectArgs, InspectArgs, ListArgs};
+use cli::{
+    AddArgs, Cli, Commands, ConnectArgs, DeleteArgs, DisconnectArgs, InspectArgs, ListArgs,
+};
 use colored::*;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_FULL;
 use comfy_table::{Cell, Color, ContentArrangement, Table};
 use model::{Edge, Node};
+use std::path::{Path, PathBuf};
 use storage::Storage;
 
 fn main() -> Result<()> {
-    // Normalize command-line arguments to seamlessly support `--connect`, `-connect`, `-create`, etc.
     let raw_args: Vec<String> = std::env::args().collect();
-    let normalized_args: Vec<String> = raw_args
-        .into_iter()
-        .enumerate()
-        .map(|(idx, arg)| {
-            if idx == 1 {
-                match arg.as_str() {
-                    "--connect" | "-connect" => "connect".to_string(),
-                    "--create" | "-create" => "create".to_string(),
-                    "--list" | "-list" => "list".to_string(),
-                    "--inspect" | "-inspect" => "inspect".to_string(),
-                    "--delete" | "-delete" => "delete".to_string(),
-                    "--disconnect" | "-disconnect" => "disconnect".to_string(),
-                    "--edges" | "-edges" => "edges".to_string(),
-                    _ => arg,
-                }
-            } else {
-                arg
-            }
-        })
-        .collect();
+    let normalized_args = normalize_arguments(&raw_args);
 
     let cli = Cli::parse_from(normalized_args);
 
+    // If --file was passed, use it directly. Otherwise resolve by --graph name or fallback
     let graph_path = match cli.file {
         Some(path) => path,
-        None => Storage::find_or_default_path()?,
+        None => Storage::resolve_graph_path(cli.graph.as_deref())?,
     };
 
     match cli.command {
-        Commands::Init => {
-            if graph_path.exists() {
-                println!(
-                    "{} Graph file already exists at {}",
-                    "ℹ".yellow().bold(),
-                    graph_path.display().to_string().cyan()
-                );
-            } else {
-                let empty_graph = model::Graph::new();
-                Storage::save(&graph_path, &empty_graph)?;
-                println!(
-                    "{} Initialized new nodes graph at {}",
-                    "✓".green().bold(),
-                    graph_path.display().to_string().cyan()
-                );
-            }
+        Commands::CreateGraph(args) => {
+            handle_create_graph(&args.name)?;
         }
 
-        Commands::Create(args) => {
-            handle_create(&graph_path, args)?;
+        Commands::ListGraphs(args) => {
+            handle_list_graphs(args)?;
+        }
+
+        Commands::DeleteGraph(args) => {
+            handle_delete_graph(&args.name)?;
+        }
+
+        Commands::Init => {
+            handle_init(&graph_path)?;
+        }
+
+        Commands::Add(args) => {
+            handle_add_node(&graph_path, args)?;
         }
 
         Commands::List(args) => {
@@ -94,7 +76,227 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_create(path: &std::path::Path, args: CreateArgs) -> Result<()> {
+/// Normalizes CLI tokens so leading flags like `--create_graph`, `--add`, `--connect`
+/// or invocation as `graph1 --add ...` or `nodes graph1 --add ...` parse cleanly.
+fn normalize_arguments(args: &[String]) -> Vec<String> {
+    if args.is_empty() {
+        return vec!["nodes".to_string()];
+    }
+
+    let exe_name = Path::new(&args[0])
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("nodes");
+
+    let mut result = vec!["nodes".to_string()];
+    let mut i = 1;
+
+    // If binary was invoked as e.g. `graph1` (not `nodes`), inject `--graph <graph1>`
+    if exe_name != "nodes" && !exe_name.is_empty() {
+        result.push("--graph".to_string());
+        result.push(exe_name.to_string());
+    }
+
+    // Inspect remaining args
+    let mut has_graph_flag = false;
+    for arg in &args[1..] {
+        if arg == "--graph" || arg == "-g" {
+            has_graph_flag = true;
+            break;
+        }
+    }
+
+    // If invoked as `nodes <graph_name> <subcommand>` (where graph_name is not a subcommand or flag)
+    if exe_name == "nodes" && !has_graph_flag && args.len() > 1 {
+        let first_arg = &args[1];
+        let known_subcommands = [
+            "create-graph",
+            "create_graph",
+            "--create_graph",
+            "-create_graph",
+            "--create-graph",
+            "-create-graph",
+            "list-graphs",
+            "list_graphs",
+            "graphs",
+            "delete-graph",
+            "delete_graph",
+            "add",
+            "--add",
+            "-add",
+            "create",
+            "--create",
+            "-create",
+            "connect",
+            "--connect",
+            "-connect",
+            "disconnect",
+            "--disconnect",
+            "-disconnect",
+            "list",
+            "--list",
+            "-list",
+            "ls",
+            "inspect",
+            "--inspect",
+            "-inspect",
+            "delete",
+            "--delete",
+            "-delete",
+            "edges",
+            "--edges",
+            "-edges",
+            "init",
+            "help",
+            "--help",
+            "-h",
+            "--version",
+            "-V",
+            "--file",
+        ];
+
+        let is_known = known_subcommands.contains(&first_arg.as_str()) || first_arg.starts_with('-');
+        if !is_known && args.len() > 2 {
+            // Treat args[1] as the graph name
+            result.push("--graph".to_string());
+            result.push(first_arg.clone());
+            i = 2; // skip first_arg since we processed it
+        }
+    }
+
+    while i < args.len() {
+        let arg = &args[i];
+        let normalized = match arg.as_str() {
+            "--create_graph" | "-create_graph" | "--create-graph" | "-create-graph" => {
+                "create-graph".to_string()
+            }
+            "--list_graphs" | "-list_graphs" | "--list-graphs" | "-list-graphs" => {
+                "list-graphs".to_string()
+            }
+            "--delete_graph" | "-delete_graph" | "--delete-graph" | "-delete-graph" => {
+                "delete-graph".to_string()
+            }
+            "--add" | "-add" | "--create" | "-create" => "add".to_string(),
+            "--connect" | "-connect" => "connect".to_string(),
+            "--disconnect" | "-disconnect" => "disconnect".to_string(),
+            "--list" | "-list" => "list".to_string(),
+            "--inspect" | "-inspect" => "inspect".to_string(),
+            "--delete" | "-delete" => "delete".to_string(),
+            "--edges" | "-edges" => "edges".to_string(),
+            _ => arg.clone(),
+        };
+        result.push(normalized);
+        i += 1;
+    }
+
+    result
+}
+
+fn handle_init(graph_path: &Path) -> Result<()> {
+    if graph_path.exists() {
+        println!(
+            "{} Graph file already exists at {}",
+            "ℹ".yellow().bold(),
+            graph_path.display().to_string().cyan()
+        );
+    } else {
+        let empty_graph = model::Graph::new();
+        Storage::save(graph_path, &empty_graph)?;
+        println!(
+            "{} Initialized new nodes graph at {}",
+            "✓".green().bold(),
+            graph_path.display().to_string().cyan()
+        );
+    }
+    Ok(())
+}
+
+fn handle_create_graph(name: &str) -> Result<()> {
+    let (graph_file, launcher) = Storage::create_graph(name)?;
+
+    println!(
+        "{} Created graph '{}'",
+        "✓".green().bold(),
+        name.cyan().bold()
+    );
+    println!("  • Graph file: {}", graph_file.display().to_string().dimmed());
+    println!("  • Command created: {}", launcher.display().to_string().green().bold());
+    println!("\nYou can now design your system using the '{}' command directly:", name.cyan().bold());
+    println!(
+        "  {} --add node1 --tag \"auth\" --metadata '{{\"port\": 8080}}' --ninputs 2 --noutputs 1",
+        name.yellow()
+    );
+    println!(
+        "  {} --connect node1 -o 0 -i 1 node2",
+        name.yellow()
+    );
+    println!("  {} list", name.yellow());
+    println!("  {} inspect node1", name.yellow());
+
+    Ok(())
+}
+
+fn handle_list_graphs(args: ListArgs) -> Result<()> {
+    let reg = Storage::read_registry();
+
+    if args.json {
+        let json_val = serde_json::to_string_pretty(&reg)?;
+        println!("{}", json_val);
+        return Ok(());
+    }
+
+    if reg.is_empty() {
+        println!("{}", "No registered graphs found.".yellow());
+        println!("Run 'nodes --create_graph <name>' to create your first graph.");
+        return Ok(());
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(vec![
+            Cell::new("Graph Name").fg(Color::Cyan),
+            Cell::new("CLI Command").fg(Color::Yellow),
+            Cell::new("Storage File").fg(Color::Green),
+        ]);
+
+    for (name, path) in &reg {
+        let command_str = format!("{} ...", name);
+        table.add_row(vec![
+            Cell::new(name),
+            Cell::new(command_str),
+            Cell::new(path),
+        ]);
+    }
+
+    println!("{}", table);
+    println!("Total graphs: {}", reg.len().to_string().green().bold());
+
+    Ok(())
+}
+
+fn handle_delete_graph(name: &str) -> Result<()> {
+    let reg = Storage::read_registry();
+    if let Some(path_str) = reg.get(name) {
+        let p = PathBuf::from(path_str);
+        if p.exists() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    Storage::unregister_graph(name)?;
+    Storage::remove_launcher(name);
+
+    println!(
+        "{} Deleted graph '{}' and removed command launcher.",
+        "✓".green().bold(),
+        name.cyan()
+    );
+    Ok(())
+}
+
+fn handle_add_node(path: &Path, args: AddArgs) -> Result<()> {
     let mut graph = Storage::load(path)?;
 
     // Parse and validate metadata JSON
@@ -116,7 +318,7 @@ fn handle_create(path: &std::path::Path, args: CreateArgs) -> Result<()> {
     Storage::save(path, &graph)?;
 
     println!(
-        "{} Created node '{}' [tag: {}, inputs: 0..{}, outputs: 0..{}]",
+        "{} Added node '{}' [tag: {}, inputs: 0..{}, outputs: 0..{}]",
         "✓".green().bold(),
         node.name.bold().cyan(),
         node.tag.as_deref().unwrap_or("-").yellow(),
@@ -128,7 +330,7 @@ fn handle_create(path: &std::path::Path, args: CreateArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_connect(path: &std::path::Path, args: ConnectArgs) -> Result<()> {
+fn handle_connect(path: &Path, args: ConnectArgs) -> Result<()> {
     let mut graph = Storage::load(path)?;
 
     let edge = Edge {
@@ -164,7 +366,7 @@ fn handle_connect(path: &std::path::Path, args: ConnectArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_disconnect(path: &std::path::Path, args: DisconnectArgs) -> Result<()> {
+fn handle_disconnect(path: &Path, args: DisconnectArgs) -> Result<()> {
     let mut graph = Storage::load(path)?;
 
     let initial_len = graph.edges.len();
@@ -199,7 +401,7 @@ fn handle_disconnect(path: &std::path::Path, args: DisconnectArgs) -> Result<()>
     Ok(())
 }
 
-fn handle_edges(path: &std::path::Path, args: ListArgs) -> Result<()> {
+fn handle_edges(path: &Path, args: ListArgs) -> Result<()> {
     let graph = Storage::load(path)?;
 
     if args.json {
@@ -210,7 +412,7 @@ fn handle_edges(path: &std::path::Path, args: ListArgs) -> Result<()> {
 
     if graph.edges.is_empty() {
         println!("{}", "No connections / edges found in the system graph.".yellow());
-        println!("Run 'nodes connect <from> -o <out_port> -i <in_port> <to>' to connect nodes.");
+        println!("Run 'connect <from> -o <out_port> -i <in_port> <to>' to connect nodes.");
         return Ok(());
     }
 
@@ -251,7 +453,7 @@ fn handle_edges(path: &std::path::Path, args: ListArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_list(path: &std::path::Path, args: ListArgs) -> Result<()> {
+fn handle_list(path: &Path, args: ListArgs) -> Result<()> {
     let graph = Storage::load(path)?;
 
     if args.json {
@@ -261,8 +463,8 @@ fn handle_list(path: &std::path::Path, args: ListArgs) -> Result<()> {
     }
 
     if graph.nodes.is_empty() {
-        println!("{}", "No nodes found in the current system graph.".yellow());
-        println!("Run 'nodes create <name>' to create your first node.");
+        println!("{}", "No nodes found in this graph.".yellow());
+        println!("Run '--add <name>' to create your first node.");
         return Ok(());
     }
 
@@ -322,7 +524,7 @@ fn handle_list(path: &std::path::Path, args: ListArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_inspect(path: &std::path::Path, args: InspectArgs) -> Result<()> {
+fn handle_inspect(path: &Path, args: InspectArgs) -> Result<()> {
     let graph = Storage::load(path)?;
 
     let node = match graph.get_node(&args.name) {
@@ -397,7 +599,7 @@ fn handle_inspect(path: &std::path::Path, args: InspectArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_delete(path: &std::path::Path, args: DeleteArgs) -> Result<()> {
+fn handle_delete(path: &Path, args: DeleteArgs) -> Result<()> {
     let mut graph = Storage::load(path)?;
 
     match graph.remove_node(&args.name) {
