@@ -228,25 +228,31 @@ impl Visualizer {
             }
         }
 
+        // If no pure source exists (e.g. fully cyclic graph), seed with the first node
+        if queue.is_empty() {
+            if let Some(first_node) = graph.nodes.keys().next() {
+                queue.push_back((first_node.clone(), 0));
+                visited.insert(first_node.clone());
+            }
+        }
+
         let mut node_layers: BTreeMap<String, usize> = BTreeMap::new();
 
         while let Some((node, layer)) = queue.pop_front() {
-            let current_layer = node_layers.entry(node.clone()).or_insert(layer);
-            if layer > *current_layer {
-                *current_layer = layer;
-            }
+            node_layers.insert(node.clone(), layer);
 
             if let Some(neighbors) = adj_list.get(&node) {
                 for neighbor in neighbors {
-                    queue.push_back((neighbor.clone(), layer + 1));
-                    visited.insert(neighbor.clone());
+                    if visited.insert(neighbor.clone()) {
+                        queue.push_back((neighbor.clone(), layer + 1));
+                    }
                 }
             }
         }
 
-        // Add any remaining unvisited nodes (cycles or disconnected components)
+        // Add any remaining unvisited nodes
         for name in graph.nodes.keys() {
-            if !visited.contains(name) {
+            if !node_layers.contains_key(name) {
                 node_layers.insert(name.clone(), 0);
             }
         }
