@@ -30,8 +30,58 @@ pub enum Commands {
     #[command(alias = "rm", alias = "remove")]
     Delete(DeleteArgs),
 
+    /// Connect an output port of a node to an input port of another node
+    #[command(alias = "--connect", alias = "-connect", alias = "link")]
+    Connect(ConnectArgs),
+
+    /// Disconnect nodes
+    #[command(alias = "--disconnect", alias = "-disconnect", alias = "unlink")]
+    Disconnect(DisconnectArgs),
+
+    /// List all connections / edges in the system graph
+    #[command(alias = "connections", alias = "links")]
+    Edges(ListArgs),
+
     /// Initialize a new empty nodes.json graph in current directory
     Init,
+}
+
+#[derive(Args, Debug)]
+pub struct ConnectArgs {
+    /// Source node name
+    pub from_node: String,
+
+    /// Destination node name
+    pub to_node: String,
+
+    /// Output port index of the source node (default: 0)
+    #[arg(short = 'o', long = "out", alias = "from-port", alias = "output", default_value_t = 0)]
+    pub out_port: u32,
+
+    /// Input port index of the destination node (default: 0)
+    #[arg(short = 'i', long = "in", alias = "to-port", alias = "input", default_value_t = 0)]
+    pub in_port: u32,
+
+    /// Optional schema or contract for this connection (e.g. 'auth.schema.json')
+    #[arg(long)]
+    pub schema: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct DisconnectArgs {
+    /// Source node name
+    pub from_node: String,
+
+    /// Destination node name
+    pub to_node: String,
+
+    /// Output port index of the source node (default: 0)
+    #[arg(short = 'o', long = "out", default_value_t = 0)]
+    pub out_port: u32,
+
+    /// Input port index of the destination node (default: 0)
+    #[arg(short = 'i', long = "in", default_value_t = 0)]
+    pub in_port: u32,
 }
 
 #[derive(Args, Debug)]

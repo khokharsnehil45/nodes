@@ -84,4 +84,75 @@ impl Graph {
     pub fn get_node(&self, name: &str) -> Option<&Node> {
         self.nodes.get(name)
     }
+
+    pub fn add_edge(&mut self, edge: Edge) -> Result<(), String> {
+        let from_node = self.nodes.get(&edge.from_node).ok_or_else(|| {
+            format!("Source node '{}' does not exist in the graph", edge.from_node)
+        })?;
+
+        let to_node = self.nodes.get(&edge.to_node).ok_or_else(|| {
+            format!("Destination node '{}' does not exist in the graph", edge.to_node)
+        })?;
+
+        if from_node.n_outputs == 0 {
+            return Err(format!(
+                "Node '{}' has 0 outputs. Cannot connect from it.",
+                edge.from_node
+            ));
+        }
+
+        if edge.from_port >= from_node.n_outputs {
+            return Err(format!(
+                "Invalid output port: '{}' has {} output(s) (valid ports: 0..{}), but {} was requested",
+                edge.from_node,
+                from_node.n_outputs,
+                from_node.n_outputs - 1,
+                edge.from_port
+            ));
+        }
+
+        if to_node.n_inputs == 0 {
+            return Err(format!(
+                "Node '{}' has 0 inputs. Cannot connect to it.",
+                edge.to_node
+            ));
+        }
+
+        if edge.to_port >= to_node.n_inputs {
+            return Err(format!(
+                "Invalid input port: '{}' has {} input(s) (valid ports: 0..{}), but {} was requested",
+                edge.to_node,
+                to_node.n_inputs,
+                to_node.n_inputs - 1,
+                edge.to_port
+            ));
+        }
+
+        // Check for duplicate connection
+        let exists = self.edges.iter().any(|e| {
+            e.from_node == edge.from_node
+                && e.from_port == edge.from_port
+                && e.to_node == edge.to_node
+                && e.to_port == edge.to_port
+        });
+
+        if exists {
+            return Err(format!(
+                "Connection already exists: {}:out:{} -> {}:in:{}",
+                edge.from_node, edge.from_port, edge.to_node, edge.to_port
+            ));
+        }
+
+        self.edges.push(edge);
+        Ok(())
+    }
+
+    pub fn incoming_edges(&self, node_name: &str) -> Vec<&Edge> {
+        self.edges.iter().filter(|e| e.to_node == node_name).collect()
+    }
+
+    pub fn outgoing_edges(&self, node_name: &str) -> Vec<&Edge> {
+        self.edges.iter().filter(|e| e.from_node == node_name).collect()
+    }
 }
+

@@ -10,7 +10,27 @@
       },
       "n_inputs": 2,
       "n_outputs": 3
+    },
+    "node2": {
+      "name": "node2",
+      "tag": "order_service",
+      "metadata": {},
+      "n_inputs": 2,
+      "n_outputs": 1
     }
   },
-  "edges": []
+  "edges": [
+    {
+      "from_node": "node1",
+      "from_port": 0,
+      "to_node": "node2",
+      "to_port": 1
+    },
+    {
+      "from_node": "node1",
+      "from_port": 1,
+      "to_node": "node2",
+      "to_port": 0
+    }
+  ]
 }
