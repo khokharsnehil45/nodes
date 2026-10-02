@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "nodes": {
+    "node1": {
+      "name": "node1",
+      "tag": "auth_service",
+      "metadata": {
+        "database": "postgres",
+        "port": 5432
+      },
+      "n_inputs": 2,
+      "n_outputs": 3
+    }
+  },
+  "edges": []
+}
