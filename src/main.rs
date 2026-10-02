@@ -1,6 +1,7 @@
 mod cli;
 mod model;
 mod storage;
+mod visualizer;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
@@ -70,6 +71,11 @@ fn main() -> Result<()> {
 
         Commands::Edges(args) => {
             handle_edges(&graph_path, args)?;
+        }
+
+        Commands::Draw => {
+            let graph = Storage::load(&graph_path)?;
+            visualizer::Visualizer::render(&graph);
         }
     }
 
@@ -146,6 +152,15 @@ fn normalize_arguments(args: &[String]) -> Vec<String> {
             "edges",
             "--edges",
             "-edges",
+            "draw",
+            "--draw",
+            "-draw",
+            "render",
+            "--render",
+            "-render",
+            "view",
+            "--view",
+            "-view",
             "init",
             "help",
             "--help",
@@ -185,6 +200,9 @@ fn normalize_arguments(args: &[String]) -> Vec<String> {
                 "delete".to_string()
             }
             "--edges" | "-edges" => "edges".to_string(),
+            "--draw" | "-draw" | "--render" | "-render" | "render" | "--view" | "-view" | "view" => {
+                "draw".to_string()
+            }
             _ => arg.clone(),
         };
         result.push(normalized);

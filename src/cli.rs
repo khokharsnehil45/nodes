@@ -71,6 +71,10 @@ pub enum Commands {
     #[command(alias = "--edges", alias = "-edges", alias = "connections", alias = "links")]
     Edges(ListArgs),
 
+    /// Visualize the graph network topology in the terminal
+    #[command(alias = "render", alias = "view", alias = "--draw", alias = "--render", alias = "--view")]
+    Draw,
+
     /// Initialize a new empty nodes.json graph in current directory
     Init,
 }
